@@ -108,7 +108,7 @@ Return ONLY raw JSON — no markdown, no explanation, no code fences. Your entir
   ]
 }${wordWatchSection}
 
-Use web search to find the most recent real statements. Return 4-6 mention entries with realistic current stock prices. Focus on statements most likely to move markets.`;
+Use web search to find the most recent real statements. Return 4-6 mention entries with realistic current stock prices. Focus on statements most likely to move markets.IMPORTANT: Your entire response must be ONLY the JSON object. Start with { and end with }. No explanation, no markdown, no text outside the JSON.`;
 
   try {
     const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
