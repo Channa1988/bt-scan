@@ -1,52 +1,6 @@
-// Vercel serverless function - 60 second timeout
-// Strategy: Pre-fetch RSS headlines first (fast), then send to Claude with web search for depth
-
-const NEWS_FEEDS = [
-  "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",          // WSJ Markets
-  "https://feeds.reuters.com/reuters/businessNews",           // Reuters Business  
-  "https://www.cnbc.com/id/100003114/device/rss/rss.html",  // CNBC Markets
-  "https://feeds.content.dowjones.io/public/rss/mw_topstories", // MarketWatch
-];
-
-async function fetchRSSHeadlines(people) {
-  const headlines = [];
-  const personLower = people.map(p => p.toLowerCase().split(' '));
-
-  await Promise.allSettled(
-    NEWS_FEEDS.map(async (url) => {
-      try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
-        const text = await res.text();
-        // Extract titles and descriptions from RSS
-        const items = text.match(/<item>[\s\S]*?<\/item>/g) || [];
-        for (const item of items.slice(0, 15)) {
-          const title = (item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || item.match(/<title>(.*?)<\/title>/))?.[1] || '';
-          const desc  = (item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/) || item.match(/<description>(.*?)<\/description>/))?.[1] || '';
-          const pubDate = item.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || '';
-          const combined = (title + ' ' + desc).toLowerCase();
-          // Only include if relevant to tracked people or market-moving
-          const relevant = personLower.some(parts => parts.every(part => combined.includes(part)))
-            || combined.match(/tariff|sanction|executive order|fed rate|earnings|merger|acquisition|ban|deal|billion/);
-          if (relevant && title) {
-            headlines.push(`[${pubDate}] ${title}: ${desc.slice(0, 150).replace(/<[^>]+>/g, '')}`);
-          }
-        }
-      } catch {}
-    })
-  );
-
-  return headlines.slice(0, 20);
-}
-
 export default async function handler(req, res) {
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'API key not configured' });
@@ -55,63 +9,22 @@ export default async function handler(req, res) {
   const peopleList = people.join(', ');
   const today = new Date().toISOString().split('T')[0];
 
-  // Step 1: Pre-fetch RSS headlines in parallel (fast - 4s max)
-  let rssContext = '';
-  try {
-    const headlines = await fetchRSSHeadlines(people);
-    if (headlines.length > 0) {
-      rssContext = `\n\nHere are recent news headlines to help inform your analysis:\n${headlines.join('\n')}\n`;
-    }
-  } catch {}
-
-  const wordWatchSection = wordWatches.length > 0
-    ? `\n\nAlso check for these specific keywords and include wordMatches entries if found:\n${wordWatches.map(w => `- "${w.word}" said by ${w.person}`).join('\n')}`
+  const wordSection = wordWatches.length > 0
+    ? `\n\nCheck for these keywords and add to wordMatches if found:\n${wordWatches.map(w => `- "${w.word}" by ${w.person}`).join('\n')}`
     : '';
 
-  const prompt = `You are a financial intelligence analyst. Today is ${today}.
+  const prompt = `You are a financial analyst. Today is ${today}. Search for recent market-moving statements by: ${peopleList}.
 
-Search for the most recent market-moving public statements made by: ${peopleList}.
+Search Truth Social, X/Twitter, press conferences, TV interviews, news.${wordSection}
 
-Search across: Truth Social, X/Twitter, press conferences, TV interviews, rally speeches, executive orders, and news coverage.${rssContext}
+YOU MUST respond with ONLY a JSON object. No text before or after. No markdown. No explanation. Just JSON.
 
-Return ONLY raw JSON — no markdown, no explanation, no code fences. Your entire response must start with { and end with }:
+{"mentions":[{"person":"name","ticker":"TICKER","company":"Company","context":"quote","sentiment":"BULLISH","source":"Truth Social","mentionedAt":"${today}T10:00:00.000Z","priceAtMention":150.00,"currentPrice":155.00,"changePercent":3.2,"volume":"120% above avg","sector":"sector","signal":"signal text","keyLevels":{"support":145,"resistance":165},"urgency":"HIGH"}],"wordMatches":[]}
 
-{
-  "mentions": [
-    {
-      "person": "Full name of who said it",
-      "ticker": "STOCK_TICKER",
-      "company": "Full Company Name",
-      "context": "Exact quote or close paraphrase of what was said",
-      "sentiment": "BULLISH or BEARISH or NEUTRAL",
-      "source": "Where it was said e.g. Truth Social, Press Conference, Fox News",
-      "mentionedAt": "${today}T10:00:00.000Z",
-      "priceAtMention": 150.00,
-      "currentPrice": 155.00,
-      "changePercent": 3.2,
-      "volume": "estimated volume e.g. 145% above avg",
-      "sector": "Stock sector",
-      "signal": "1-2 sentence trading signal based on the statement",
-      "keyLevels": { "support": 145, "resistance": 165 },
-      "urgency": "HIGH or MEDIUM or LOW"
-    }
-  ],
-  "wordMatches": [
-    {
-      "person": "Who said it",
-      "word": "the keyword",
-      "quote": "exact quote containing the word",
-      "source": "where it was said",
-      "timestamp": "${today}T10:00:00.000Z",
-      "confidence": "HIGH or MEDIUM or LOW"
-    }
-  ]
-}${wordWatchSection}
-
-Use web search to find the most recent real statements. Return 4-6 mention entries with realistic current stock prices. Focus on statements most likely to move markets.IMPORTANT: Your entire response must be ONLY the JSON object. Start with { and end with }. No explanation, no markdown, no text outside the JSON.`;
+Return 4-6 real mentions. Use realistic current stock prices.`;
 
   try {
-    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -127,47 +40,63 @@ Use web search to find the most recent real statements. Return 4-6 mention entri
       }),
     });
 
-    const data = await anthropicRes.json();
+    const data = await response.json();
 
-    // Extract text from all content block types
+    // Extract ALL text from response
     let allText = '';
     for (const block of (data.content || [])) {
-      if (block.type === 'text') allText += ' ' + block.text;
-      if (block.type === 'tool_result') {
-        for (const inner of (block.content || [])) {
-          if (inner.type === 'text') allText += ' ' + inner.text;
+      if (block.type === 'text') allText += block.text;
+    }
+
+    // Find JSON - look for mentions key
+    let parsed = null;
+    let searchText = allText;
+    
+    // Strip any markdown code blocks
+    searchText = searchText.replace(/```json/g, '').replace(/```/g, '');
+    
+    // Find the outermost JSON object containing "mentions"
+    const start = searchText.indexOf('{"mentions"');
+    if (start !== -1) {
+      let depth = 0, end = start;
+      for (let i = start; i < searchText.length; i++) {
+        if (searchText[i] === '{') depth++;
+        else if (searchText[i] === '}') {
+          depth--;
+          if (depth === 0) { end = i; break; }
         }
+      }
+      try { parsed = JSON.parse(searchText.slice(start, end + 1)); } catch(e) {
+        // Try fixing common JSON issues
+        try {
+          const fixed = searchText.slice(start, end + 1)
+            .replace(/,\s*}/g, '}')
+            .replace(/,\s*]/g, ']');
+          parsed = JSON.parse(fixed);
+        } catch(e2) {}
       }
     }
 
-    // Find JSON by locating "mentions" key anchor
-    let parsed = null;
-    const mentionsIdx = allText.indexOf('"mentions"');
-    if (mentionsIdx > -1) {
-      const start = allText.lastIndexOf('{', mentionsIdx);
-      if (start > -1) {
-        let depth = 0, end = start;
-        for (let i = start; i < allText.length; i++) {
-          if (allText[i] === '{') depth++;
-          else if (allText[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
-        }
-        try {
-          parsed = JSON.parse(allText.slice(start, end + 1));
-        } catch {
-          try {
-            const cleaned = allText.slice(start, end + 1)
-              .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-              .replace(/,\s*([}\]])/g, '$1'); // trailing commas
-            parsed = JSON.parse(cleaned);
-          } catch {}
+    // Fallback - find any JSON with mentions
+    if (!parsed) {
+      const idx = searchText.indexOf('"mentions"');
+      if (idx > -1) {
+        const s = searchText.lastIndexOf('{', idx);
+        if (s > -1) {
+          let depth = 0, end = s;
+          for (let i = s; i < searchText.length; i++) {
+            if (searchText[i] === '{') depth++;
+            else if (searchText[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+          }
+          try { parsed = JSON.parse(searchText.slice(s, end + 1)); } catch(e) {}
         }
       }
     }
 
     if (!parsed) {
-      return res.status(500).json({
-        error: 'Could not parse AI response. Please try again.',
-        debug: allText.slice(0, 400),
+      return res.status(500).json({ 
+        error: 'Could not parse response',
+        debug: allText.slice(0, 500)
       });
     }
 
@@ -175,7 +104,6 @@ Use web search to find the most recent real statements. Return 4-6 mention entri
       success: true,
       data: parsed,
       scannedAt: new Date().toISOString(),
-      rssHeadlinesUsed: rssContext.length > 0,
     });
 
   } catch (err) {
