@@ -105,8 +105,8 @@ Return 4-6 real mentions. Stock prices will be updated with real-time data after
             const result = json?.chart?.result?.[0];
             if (result) {
               const meta = result.meta;
-              const currentPrice = meta.regularMarketPrice || meta.previousClose;
-              const prevClose = meta.previousClose || meta.chartPreviousClose;
+              const currentPrice = meta.regularMarketPrice || meta.regularMarketPreviousClose;
+const prevClose = meta.regularMarketPreviousClose || meta.previousClose;
               const changePercent = prevClose ? ((currentPrice - prevClose) / prevClose * 100) : 0;
               priceMap[ticker] = {
                 currentPrice: parseFloat(currentPrice?.toFixed(2)),
