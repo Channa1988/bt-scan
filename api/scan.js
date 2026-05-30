@@ -96,7 +96,7 @@ Return 4-6 real mentions. Stock prices will be updated with real-time data after
       await Promise.allSettled(
         tickers.map(async (ticker) => {
           try {
-            const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=2d`;
+            const url = `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5d&includePrePost=false`;
             const r = await fetch(url, {
               headers: { 'User-Agent': 'Mozilla/5.0' },
               signal: AbortSignal.timeout(5000),
