@@ -1,0 +1,6 @@
+{
+  "name": "bt-scan-vercel",
+  "version": "1.0.0",
+  "description": "BillionaireTrades scan function - Vercel deployment",
+  "private": true
+}
